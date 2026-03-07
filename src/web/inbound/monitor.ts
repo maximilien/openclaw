@@ -406,5 +406,48 @@ export async function monitorWebInbox(options: {
     },
     // IPC surface (sendMessage/sendPoll/sendReaction/sendComposingTo)
     ...sendApi,
+    // Fetch all WA groups this account participates in (live from WA servers).
+    // Cached for 5 minutes to avoid rate-limiting on repeated calls.
+    fetchAllGroups: (() => {
+      let cache: { data: Record<string, { id: string; subject: string; isParent?: boolean; parentGroupId?: string }>; ts: number } | null = null;
+      return async () => {
+        const now = Date.now();
+        if (cache && now - cache.ts < 5 * 60 * 1000) return cache.data;
+        const raw = await sock.groupFetchAllParticipating();
+        const data: Record<string, { id: string; subject: string; isParent?: boolean; parentGroupId?: string }> = {};
+
+        // Fetch full metadata for each group to get accurate isParent flag
+        for (const [jid, basicMeta] of Object.entries(raw)) {
+          try {
+            const fullMeta = await sock.groupMetadata(jid);
+            const isParent = (fullMeta as { isParent?: boolean }).isParent ??
+                            (fullMeta as { isCommunity?: boolean }).isCommunity ??
+                            (fullMeta as { isAnnounce?: boolean; isParent?: boolean }).isParent ?? false;
+
+            // Debug: log metadata for groups with "Maximilien" in the name
+            if (fullMeta.subject?.toLowerCase().includes('maximilien')) {
+              console.log(`[DEBUG] Group metadata for ${fullMeta.subject}:`, JSON.stringify(fullMeta, null, 2));
+            }
+
+            data[jid] = {
+              id: jid,
+              subject: fullMeta.subject ?? (basicMeta as { subject?: string }).subject ?? jid,
+              isParent,
+              parentGroupId: (fullMeta as { parentGroupId?: string }).parentGroupId,
+            };
+          } catch (err) {
+            // Fallback to basic metadata if full fetch fails
+            data[jid] = {
+              id: jid,
+              subject: (basicMeta as { subject?: string }).subject ?? jid,
+              isParent: (basicMeta as { isParent?: boolean }).isParent ?? false,
+              parentGroupId: (basicMeta as { parentGroupId?: string }).parentGroupId,
+            };
+          }
+        }
+        cache = { data, ts: now };
+        return data;
+      };
+    })(),
   } as const;
 }

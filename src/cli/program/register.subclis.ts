@@ -233,6 +233,15 @@ const entries: SubCliEntry[] = [
     },
   },
   {
+    name: "workflow",
+    description: "Manage and execute workflows",
+    hasSubcommands: true,
+    register: async (program) => {
+      const mod = await import("../workflow-cli.js");
+      mod.registerWorkflowCli(program);
+    },
+  },
+  {
     name: "channels",
     description: "Manage connected chat channels (Telegram, Discord, etc.)",
     hasSubcommands: true,

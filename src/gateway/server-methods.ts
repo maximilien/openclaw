@@ -25,6 +25,7 @@ import { updateHandlers } from "./server-methods/update.js";
 import { usageHandlers } from "./server-methods/usage.js";
 import { voicewakeHandlers } from "./server-methods/voicewake.js";
 import { webHandlers } from "./server-methods/web.js";
+import { whatsappHandlers } from "./server-methods/whatsapp.js";
 import { wizardHandlers } from "./server-methods/wizard.js";
 
 const ADMIN_SCOPE = "operator.admin";
@@ -67,6 +68,7 @@ const READ_METHODS = new Set([
   "agent.identity.get",
   "skills.status",
   "voicewake.get",
+  "groups.fetchAll",
   "sessions.list",
   "sessions.preview",
   "cron.list",
@@ -193,6 +195,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...ttsHandlers,
   ...skillsHandlers,
   ...sessionsHandlers,
+  ...whatsappHandlers,
   ...systemHandlers,
   ...updateHandlers,
   ...nodeHandlers,

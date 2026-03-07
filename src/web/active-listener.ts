@@ -26,6 +26,7 @@ export type ActiveWebListener = {
     participant?: string,
   ) => Promise<void>;
   sendComposingTo: (to: string) => Promise<void>;
+  fetchAllGroups?: () => Promise<Record<string, { id: string; subject: string; isParent?: boolean }>>;
   close?: () => Promise<void>;
 };
 
