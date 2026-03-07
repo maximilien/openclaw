@@ -217,15 +217,18 @@ async function sendWorkflowToAgent(
             error: `Connect failed: ${error.message}`,
           });
         },
-        onClose: (code, reason) => {
+        onClose: async (code, reason) => {
           clearTimeout(timeout);
           // Normal closure (1000) is success even if responseText is empty (tool-only execution)
           if (code === 1000) {
+            // Post response to targeted groups if any
+            await postResponseToGroups(client!, workflow, agentName, responseText);
             resolve({
               success: true,
               result: { response: responseText || "(completed - tool-only execution)" },
             });
           } else if (responseText) {
+            await postResponseToGroups(client!, workflow, agentName, responseText);
             resolve({
               success: true,
               result: { response: responseText },
@@ -251,12 +254,15 @@ async function sendWorkflowToAgent(
                 responseText += payload.text;
               }
               clearTimeout(timeout);
-              client?.stop();
-              resolve({
-                success: true,
-                result: {
-                  response: responseText || "(completed - tool-only execution)",
-                },
+              // Post response to targeted groups before resolving
+              postResponseToGroups(client!, workflow, agentName, responseText).then(() => {
+                client?.stop();
+                resolve({
+                  success: true,
+                  result: {
+                    response: responseText || "(completed - tool-only execution)",
+                  },
+                });
               });
             }
           }
@@ -273,6 +279,29 @@ async function sendWorkflowToAgent(
       });
     }
   });
+}
+
+async function postResponseToGroups(
+  client: GatewayClient,
+  workflow: Workflow,
+  agentName: string,
+  responseText: string,
+): Promise<void> {
+  // Post to all targeted groups
+  if (workflow.targeting.groups.length > 0) {
+    for (const group of workflow.targeting.groups) {
+      try {
+        const statusMessage = responseText || `I'm online and ready (workflow: ${workflow.name})`;
+        await client.request("group.send", {
+          group,
+          message: `[${agentName}] ${statusMessage}`,
+          idempotencyKey: `workflow-${workflow.id}-${agentName}-${group}-${Date.now()}`,
+        });
+      } catch (error: any) {
+        console.error(`Failed to post to group ${group}:`, error.message);
+      }
+    }
+  }
 }
 
 async function runWorkflow(workflowId: string): Promise<void> {

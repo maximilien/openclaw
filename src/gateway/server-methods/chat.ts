@@ -734,7 +734,25 @@ export const chatHandlers: GatewayRequestHandlers = {
       }
     }
     const rawSessionKey = p.sessionKey;
-    const { cfg, entry, canonicalKey: sessionKey } = loadSessionEntry(rawSessionKey);
+
+    // Workflow routing: Parse workflow session keys (format: "workflow-{executionId}-{agentId}")
+    // and route to agent-specific context
+    let routedSessionKey = rawSessionKey;
+    const workflowMatch = rawSessionKey.match(/^workflow-([^-]+)-(.+)$/);
+    if (workflowMatch) {
+      const [, executionId, agentId] = workflowMatch;
+      // Convert to standard agent session key format for proper routing
+      routedSessionKey = `agent:${agentId}:workflow:${executionId}`;
+      console.log(`[WORKFLOW ROUTING] Detected workflow session key`);
+      console.log(`  Original: ${rawSessionKey}`);
+      console.log(`  Routed to: ${routedSessionKey}`);
+      console.log(`  Agent ID: ${agentId}`);
+      console.log(`  Execution ID: ${executionId}`);
+    }
+
+    console.log(`[CHAT.SEND] Loading session entry for key: ${routedSessionKey}`);
+    const { cfg, entry, canonicalKey: sessionKey } = loadSessionEntry(routedSessionKey);
+    console.log(`[CHAT.SEND] Session loaded - canonical key: ${sessionKey}`);
     const timeoutMs = resolveAgentTimeoutMs({
       cfg,
       overrideMs: p.timeoutMs,
