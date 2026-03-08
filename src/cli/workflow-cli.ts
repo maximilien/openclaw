@@ -281,22 +281,69 @@ async function sendWorkflowToAgent(
   });
 }
 
+function getDashboardToken(): string | null {
+  // Check environment variable first
+  if (process.env.DASHBOARD_TOKEN) {
+    return process.env.DASHBOARD_TOKEN;
+  }
+
+  // Check token file
+  const tokenPath = path.join(WORKSPACE_DIR, "SYSTEM", "dashboard", "server", ".dashboard-token");
+  if (fsSync.existsSync(tokenPath)) {
+    try {
+      return fsSync.readFileSync(tokenPath, "utf-8").trim();
+    } catch (error) {
+      console.error("Failed to read dashboard token file:", error);
+    }
+  }
+
+  return null;
+}
+
 async function postResponseToGroups(
   client: GatewayClient,
   workflow: Workflow,
   agentName: string,
   responseText: string,
 ): Promise<void> {
-  // Post to all targeted groups
+  // Post to all targeted groups via dashboard API
   if (workflow.targeting.groups.length > 0) {
+    const dashboardPort = process.env.DASHBOARD_PORT || "3001";
+    const dashboardUrl = `http://localhost:${dashboardPort}`;
+    const token = getDashboardToken();
+
     for (const group of workflow.targeting.groups) {
       try {
         const statusMessage = responseText || `I'm online and ready (workflow: ${workflow.name})`;
-        await client.request("group.send", {
-          group,
-          message: `[${agentName}] ${statusMessage}`,
-          idempotencyKey: `workflow-${workflow.id}-${agentName}-${group}-${Date.now()}`,
-        });
+        const message = `${statusMessage}`;
+
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+
+        // Add authorization header if token is available
+        if (token) {
+          headers.Authorization = `Bearer ${token}`;
+        }
+
+        const response = await fetch(
+          `${dashboardUrl}/api/groups/${encodeURIComponent(group)}/messages`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              content: message,
+              mentions: [],
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          const error = await response.text();
+          console.error(`Failed to post to group ${group}: ${response.status} ${error}`);
+        } else {
+          console.log(`Posted status from ${agentName} to group ${group}`);
+        }
       } catch (error: any) {
         console.error(`Failed to post to group ${group}:`, error.message);
       }
