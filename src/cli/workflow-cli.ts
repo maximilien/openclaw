@@ -332,6 +332,7 @@ async function postResponseToGroups(
             method: "POST",
             headers,
             body: JSON.stringify({
+              from: agentName,
               content: message,
               mentions: [],
             }),
