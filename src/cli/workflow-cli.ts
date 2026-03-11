@@ -10,9 +10,17 @@ import { GatewayClient } from "../gateway/client.js";
 import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 import { GATEWAY_CLIENT_NAMES, GATEWAY_CLIENT_MODES } from "../gateway/protocol/client-info.js";
 
-const WORKSPACE_DIR = path.join(os.homedir(), ".openclaw", "workspace");
-const WORKFLOWS_DIR = path.join(WORKSPACE_DIR, "WORKFLOWS");
-const EXECUTIONS_DIR = path.join(WORKFLOWS_DIR, "executions");
+// Default workspace directory (can be overridden via --workspace option)
+let WORKSPACE_DIR = path.join(os.homedir(), ".openclaw", "workspace");
+let WORKFLOWS_DIR = path.join(WORKSPACE_DIR, "WORKFLOWS");
+let EXECUTIONS_DIR = path.join(WORKFLOWS_DIR, "executions");
+
+/** Set workspace directory and update dependent paths */
+function setWorkspaceDir(workspacePath: string): void {
+  WORKSPACE_DIR = workspacePath;
+  WORKFLOWS_DIR = path.join(WORKSPACE_DIR, "WORKFLOWS");
+  EXECUTIONS_DIR = path.join(WORKFLOWS_DIR, "executions");
+}
 
 interface WorkflowExecutionParticipant {
   agentId: string;
@@ -374,21 +382,49 @@ async function runWorkflow(workflowId: string): Promise<void> {
   }
 
   const executionFiles = await fs.readdir(executionsDir);
-  const jsonFiles = executionFiles
-    .filter((f) => f.endsWith(".json"))
-    .sort()
-    .reverse(); // Most recent first
+  const executions: { file: string; exec: WorkflowExecution }[] = [];
 
-  let execution: WorkflowExecution | null = null;
-
-  for (const file of jsonFiles) {
+  // Load all running executions
+  for (const file of executionFiles.filter((f) => f.endsWith(".json"))) {
     const execId = path.basename(file, ".json");
     const exec = await loadExecution(workflowId, execId);
     if (exec && exec.status === "running") {
-      execution = exec;
-      break;
+      executions.push({ file, exec });
     }
   }
+
+  if (executions.length === 0) {
+    console.error(colorize("No running execution found", theme.error));
+    process.exit(1);
+  }
+
+  // Sort by startedAt timestamp (most recent first)
+  executions.sort((a, b) => {
+    const timeA = new Date(a.exec.startedAt).getTime();
+    const timeB = new Date(b.exec.startedAt).getTime();
+    return timeB - timeA;
+  });
+
+  // Clean up stale executions (older than 10 minutes and still "running")
+  const now = Date.now();
+  const staleThreshold = 10 * 60 * 1000; // 10 minutes
+
+  for (let i = 1; i < executions.length; i++) {
+    const exec = executions[i].exec;
+    const age = now - new Date(exec.startedAt).getTime();
+    if (age > staleThreshold) {
+      console.log(
+        `Marking stale execution ${exec.id} as failed (started ${Math.floor(age / 60000)} minutes ago)`,
+      );
+      exec.status = "failed";
+      exec.completedAt = new Date().toISOString();
+      exec.logs.push(`Execution marked as failed (stale) at ${exec.completedAt}`);
+      await saveExecution(workflowId, exec);
+    }
+  }
+
+  // Use the most recent running execution
+  let execution = executions[0].exec;
 
   if (!execution) {
     console.error(colorize("No running execution found", theme.error));
@@ -472,8 +508,23 @@ export function registerWorkflowCli(program: Command): void {
   workflow
     .command("run <workflowId>")
     .description("Execute a workflow and update execution status")
-    .action(async (workflowId: string) => {
+    .option("-w, --workspace <path>", "Workspace directory path")
+    .action(async (workflowId: string, options: { workspace?: string }) => {
       try {
+        // Set workspace directory if provided
+        if (options.workspace) {
+          const workspacePath = options.workspace.startsWith("~")
+            ? path.join(os.homedir(), options.workspace.slice(1))
+            : path.resolve(options.workspace);
+          setWorkspaceDir(workspacePath);
+        } else {
+          // Use current working directory if it contains WORKFLOWS/
+          const cwd = process.cwd();
+          if (fsSync.existsSync(path.join(cwd, "WORKFLOWS"))) {
+            setWorkspaceDir(cwd);
+          }
+        }
+
         await runWorkflow(workflowId);
       } catch (error: any) {
         console.error(formatErrorMessage(error));
